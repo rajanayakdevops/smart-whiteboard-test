@@ -20,7 +20,8 @@ function App() {
   return (
 <div
   style={{
-    // padding: "40px",
+    height: "100%",
+    width: "100%",
     backgroundColor: "red",
     // minHeight: "100v",
   }}
