@@ -37,6 +37,8 @@ app.get("/api/test", (req, res) => {
 // Save contact (FROM FRONTEND)
 app.post("/api/contact", async (req, res) => {
   try {
+    console.log("Incoming request body:", req.body); // 1️⃣
+
     const { name, email, message } = req.body;
 
     const newContact = new Contact({
@@ -45,14 +47,23 @@ app.post("/api/contact", async (req, res) => {
       message,
     });
 
-    await newContact.save();
+    console.log("Before save"); // 2️⃣
+
+    const savedContact = await newContact.save(); // 👈 failing here
+
+    console.log("Saved successfully:", savedContact); // 3️⃣
 
     res.json({ message: "Contact saved successfully ✅" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Error saving contact ❌" });
+    console.error("SAVE ERROR 👉", error); // 🔥 CRITICAL
+
+    res.status(500).json({
+      message: "Error saving contact ❌",
+      error: error.message, // expose temporarily
+    });
   }
 });
+
 
 // Get all contacts (optional but useful)
 app.get("/api/contact", async (req, res) => {
