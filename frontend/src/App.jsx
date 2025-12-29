@@ -20,10 +20,9 @@ function App() {
   return (
 <div
   style={{
-    height: "100%",
-    width: "100%",
+    minHeight: "100vh",
+    width: "100vw",
     backgroundColor: "red",
-    // minHeight: "100v",
   }}
 >
   <h1>Home Page ✅</h1>
@@ -40,6 +39,7 @@ function App() {
 
   <h2>{message}</h2>
 </div>
+
 
   );
 }
