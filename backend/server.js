@@ -16,9 +16,9 @@ mongoose
 
 /* ------------------ Schema & Model ------------------ */
 const contactSchema = new mongoose.Schema({
-  name: String,
-  email: String,
-  message: String,
+  name: { type: String, required: true },
+  email: { type: String, required: true },
+  message: { type: String, required: true },
   createdAt: {
     type: Date,
     default: Date.now,
@@ -34,42 +34,48 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "Backend working successfully 🚀" });
 });
 
-// Save contact (FROM FRONTEND)
+// Save contact (POST /api/contact)
 app.post("/api/contact", async (req, res) => {
   try {
-    console.log("Incoming request body:", req.body); // 1️⃣
+    console.log("Incoming request body:", req.body);
 
     const { name, email, message } = req.body;
 
-    const newContact = new Contact({
-      name,
-      email,
-      message,
-    });
+    if (!name || !email || !message) {
+      return res.status(400).json({ message: "All fields are required ❌" });
+    }
 
-    console.log("Before save"); // 2️⃣
+    const newContact = new Contact({ name, email, message });
 
-    const savedContact = await newContact.save(); // 👈 failing here
+    console.log("Before save");
 
-    console.log("Saved successfully:", savedContact); // 3️⃣
+    const savedContact = await newContact.save(); // Save to MongoDB
 
-    res.json({ message: "Contact saved successfully ✅" });
+    console.log("Saved successfully:", savedContact);
+
+    res.json({ message: "Contact saved successfully ✅", contact: savedContact });
   } catch (error) {
-    console.error("SAVE ERROR 👉", error); // 🔥 CRITICAL
+    console.error("SAVE ERROR 👉", error);
 
     res.status(500).json({
       message: "Error saving contact ❌",
-      error: error.message, // expose temporarily
+      error: error.message,
     });
   }
 });
 
-
-// Get all contacts (optional but useful)
+// Get all contacts (GET /api/contact)
 app.get("/api/contact", async (req, res) => {
-  const contacts = await Contact.find();
-  res.json(contacts);
+  try {
+    const contacts = await Contact.find();
+    console.log("Contacts fetched:", contacts.length);
+    res.json({ contacts });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error fetching contacts" });
+  }
 });
+
 
 /* ------------------ Server ------------------ */
 const PORT = process.env.PORT || 5000;
