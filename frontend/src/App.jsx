@@ -20,9 +20,9 @@ function App() {
   return (
 <div
   style={{
-    padding: "40px",
+    // padding: "40px",
     backgroundColor: "red",
-    minHeight: "100v",
+    // minHeight: "100v",
   }}
 >
   <h1>Home Page ✅</h1>
