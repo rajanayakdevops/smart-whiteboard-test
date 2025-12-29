@@ -1,114 +1,6 @@
-// import { useState } from "react";
-// function App() {
-//   const [name, setName] = useState("");
-//   const [email, setEmail] = useState("");
-//   const [message, setMessage] = useState("");
-//   const [responseMessage, setResponseMessage] = useState("");
-//   const [contacts, setContacts] = useState([]); // store all contacts
-
-//   const backendURL = import.meta.env.VITE_BACKEND_URL;
-
-//   // Function to save contact
-//   const saveContact = () => {
-//     if (!name || !email || !message) {
-//       alert("Please fill all fields");
-//       return;
-//     }
-
-//     fetch(`${backendURL}/api/contact`, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify({ name, email, message }),
-//     })
-//       .then((res) => res.json())
-//       .then((data) => {
-//         setResponseMessage(data.message);
-//         setName("");
-//         setEmail("");
-//         setMessage("");
-//       })
-//       .catch((err) => console.error(err));
-//   };
-
-//   // Function to get all contacts
-// const getAllContacts = () => {
-//   fetch(`${backendURL}/api/contact`)
-//     .then((res) => res.json())
-//     .then((data) => {
-//       console.log("API response:", data); // DEBUG
-//       setContacts(data.contacts); // ✅ IMPORTANT FIX
-//     })
-//     .catch((err) => console.error(err));
-// };
-
-//   return (
-//     <div style={{ minHeight: "100vh", width: "100vw", padding: "20px" }}>
-//       <h1>Contact Info</h1>
-
-//       <div style={{ marginBottom: "10px" }}>
-//         <input
-//           type="text"
-//           placeholder="Name"
-//           value={name}
-//           onChange={(e) => setName(e.target.value)}
-//           style={{ padding: "8px", width: "300px", marginRight: "10px" }}
-//         />
-//       </div>
-
-//       <div style={{ marginBottom: "10px" }}>
-//         <input
-//           type="email"
-//           placeholder="Email"
-//           value={email}
-//           onChange={(e) => setEmail(e.target.value)}
-//           style={{ padding: "8px", width: "300px", marginRight: "10px" }}
-//         />
-//       </div>
-
-//       <div style={{ marginBottom: "10px" }}>
-//         <textarea
-//           placeholder="Message"
-//           value={message}
-//           onChange={(e) => setMessage(e.target.value)}
-//           style={{ padding: "8px", width: "300px", height: "100px" }}
-//         />
-//       </div>
-
-//       <div style={{ marginBottom: "20px" }}>
-//         <button onClick={saveContact} style={{ padding: "10px 20px", marginRight: "10px" }}>
-//           Add Contact
-//         </button>
-//         <button onClick={getAllContacts} style={{ padding: "10px 20px" }}>
-//           Get All Contacts
-//         </button>
-//       </div>
-
-//       {responseMessage && <h2>{responseMessage}</h2>}
-
-//       <hr style={{ margin: "20px 0" }} />
-
-//       {contacts.length > 0 && (
-//         <div>
-//           <h2>All Contacts:</h2>
-//           <ul>
-//             {contacts.map((contact) => (
-//               <li key={contact._id}>
-//                 <strong>Name:</strong> {contact.name} | <strong>Email:</strong> {contact.email} |{" "}
-//                 <strong>Message:</strong> {contact.message}
-//               </li>
-//             ))}
-//           </ul>
-//         </div>
-//       )}
-//     </div>
-//   );
-// }
-
-// export default App;
-
-
 import { useState, useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, useNavigate, useParams } from "react-router-dom";
+import { io } from "socket.io-client";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
@@ -219,24 +111,28 @@ function JoinMeeting() {
   );
 }
 
-// Meeting Room Page
+// Meeting Room Page with Socket.IO + Chat
 function MeetingRoom() {
   const { meetingId } = useParams();
   const [meeting, setMeeting] = useState(null);
+  const [participants, setParticipants] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState("");
   const navigate = useNavigate();
 
   const username = localStorage.getItem("username");
   const storedMeetingId = localStorage.getItem("meetingId");
 
+  // Initialize Socket.IO
+  const [socket, setSocket] = useState(null);
+
   useEffect(() => {
     if (!username || !storedMeetingId) {
-      // If no info, redirect to landing
       navigate("/");
       return;
     }
 
     const joinExistingMeeting = async () => {
-      // Always use data from localStorage to auto-join
       const res = await fetch(`${BACKEND_URL}/api/meetings/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -244,18 +140,51 @@ function MeetingRoom() {
       });
       const data = await res.json();
       setMeeting(data);
+      setParticipants(data.participants || []);
     };
 
     joinExistingMeeting();
-  }, [navigate]); // Removed dependency on meetingId to always rejoin on forward/back
+
+    // Setup Socket.IO
+    const s = io(BACKEND_URL);
+    setSocket(s);
+
+    s.emit("join", { meetingId: storedMeetingId, username });
+
+    s.on("user-joined", (user) => {
+      setParticipants(prev => [...prev, user]);
+      setMessages(prev => [...prev, { system: true, text: `${user} joined the meeting` }]);
+    });
+
+    s.on("user-left", (user) => {
+      setParticipants(prev => prev.filter(u => u !== user));
+      setMessages(prev => [...prev, { system: true, text: `${user} left the meeting` }]);
+    });
+
+    s.on("message", (msg) => {
+      // if (msg.senderSocketId === socket.id) return;
+      setMessages(prev => [...prev, msg]);
+    });
+
+    return () => {
+      s.emit("leave", { meetingId: storedMeetingId, username });
+      s.disconnect();
+    };
+  }, [navigate]);
+
+  const sendMessage = () => {
+    if (!newMessage.trim()) return;
+    const msg = { username, text: newMessage };
+    socket.emit("message", { meetingId: storedMeetingId, username, text: newMessage });
+    // setMessages(prev => [...prev, msg]);
+    setNewMessage("");
+  };
 
   const leaveMeeting = async () => {
-    const username = localStorage.getItem("username");
-    const meetingId = localStorage.getItem("meetingId");
     await fetch(`${BACKEND_URL}/api/meetings/leave`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ meetingId, username })
+      body: JSON.stringify({ meetingId: storedMeetingId, username })
     });
     localStorage.removeItem("username");
     localStorage.removeItem("meetingId");
@@ -265,15 +194,37 @@ function MeetingRoom() {
   if (!meeting) return <p>Loading meeting...</p>;
 
   return (
-    <div>
-      <h3>Meeting ID: {meeting.meetingId}</h3>
-      <h4>Participants</h4>
-      <ul>
-        {meeting.participants.map((p) => (
-          <li key={p}>{p}</li>
-        ))}
-      </ul>
-      <button onClick={leaveMeeting}>Leave Meeting</button>
+    <div style={{ display: "flex", gap: "20px" }}>
+      {/* Participants List */}
+      <div style={{ flex: 1 }}>
+        <h3>Meeting ID: {meeting.meetingId}</h3>
+        <h4>Participants</h4>
+        <ul>
+          {participants.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+        <button onClick={leaveMeeting}>Leave Meeting</button>
+      </div>
+
+      {/* Chat Box */}
+      <div style={{ flex: 1 }}>
+        <h4>Chat</h4>
+        <div style={{ height: "300px", overflowY: "scroll", border: "1px solid #ccc", padding: "5px" }}>
+          {messages.map((m, i) => (
+            <p key={i} style={{ color: m.system ? "gray" : "black" }}>
+              {m.system ? m.text : <><b>{m.username}:</b> {m.text}</>}
+            </p>
+          ))}
+        </div>
+        <input
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder="Type a message"
+          style={{ width: "80%", padding: "5px", marginTop: "5px" }}
+        />
+        <button onClick={sendMessage} style={{ padding: "5px 10px", marginLeft: "5px" }}>Send</button>
+      </div>
     </div>
   );
 }
@@ -283,7 +234,7 @@ function App() {
   return (
     <Router>
       <div style={{ padding: 20 }}>
-        <h2>Mini Google Meet (Step 1)</h2>
+        <h2>Mini Google Meet (Step 2 - Real-time Chat)</h2>
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/create" element={<CreateMeeting />} />
