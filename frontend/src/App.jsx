@@ -18,21 +18,28 @@ function App() {
   };
 
   return (
-    <div style={{ padding: "40px" }}>
-      <h1>Home Page ✅</h1>
+<div
+  style={{
+    padding: "40px",
+    backgroundColor: "pink",
+    minHeight: "100vh"
+  }}
+>
+  <h1>Home Page ✅</h1>
 
-      <button onClick={callTestApi} style={{ marginRight: "10px" }}>
-        Test API
-      </button>
+  <button onClick={callTestApi} style={{ marginRight: "10px" }}>
+    Test API
+  </button>
 
-      <button onClick={callContactApi}>
-        Contact API
-      </button>
+  <button onClick={callContactApi}>
+    Contact API
+  </button>
 
-      <hr />
+  <hr />
 
-      <h2>{message}</h2>
-    </div>
+  <h2>{message}</h2>
+</div>
+
   );
 }
 
