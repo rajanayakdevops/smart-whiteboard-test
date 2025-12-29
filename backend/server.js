@@ -58,7 +58,7 @@ app.post("/api/contact", async (req, res) => {
     console.error("SAVE ERROR 👉", error); // 🔥 CRITICAL
 
     res.status(500).json({
-      message: "Error saving contact ❌",
+      message: "data does not saved into data base ",
       error: error.message, // expose temporarily
     });
   }
