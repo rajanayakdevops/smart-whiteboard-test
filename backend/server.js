@@ -9,7 +9,7 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "Backend working successfully 🚀" });
 });
 app.get("/api/contact", (req, res) => {
-  res.json({ message: "contact is working fine righta 🚀" });
+  res.json({ message: "hi this is raja and my contact number is 8935992566 🚀" });
 });
 
 const PORT = process.env.PORT || 5000;
