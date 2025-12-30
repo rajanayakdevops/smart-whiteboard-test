@@ -1,15 +1,22 @@
-import { useState, useEffect } from "react";
-import { BrowserRouter as Router, Routes, Route, useNavigate, useParams } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { io } from "socket.io-client";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
-// Landing Page
+/* ---------------- LANDING ---------------- */
 function Landing() {
   const navigate = useNavigate();
   return (
-    <div>
+    <div style={{ padding: 40 }}>
       <h3>Welcome to Mini Google Meet</h3>
+      <br />
       <button onClick={() => navigate("/create")}>Create Meeting</button>
       <br /><br />
       <button onClick={() => navigate("/join")}>Join Meeting</button>
@@ -17,81 +24,59 @@ function Landing() {
   );
 }
 
-// Create Meeting Page
+/* ---------------- CREATE ---------------- */
 function CreateMeeting() {
   const [username, setUsername] = useState("");
   const navigate = useNavigate();
 
   const createMeeting = async () => {
-    if (!username.trim()) {
-      alert("Please enter your name");
-      return;
-    }
-
     const res = await fetch(`${BACKEND_URL}/api/meetings/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username })
+      body: JSON.stringify({ username }),
     });
     const data = await res.json();
 
-    // Save username and meetingId in localStorage
     localStorage.setItem("username", username);
     localStorage.setItem("meetingId", data.meetingId);
-
     navigate(`/meeting/${data.meetingId}`);
   };
 
   return (
-    <div>
-      <h3>Create a Meeting</h3>
+    <div style={{ padding: 40 }}>
+      <h3>Create Meeting</h3>
       <input
         placeholder="Your name"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
       />
       <br /><br />
-      <button onClick={createMeeting}>Create Meeting</button>
-      <br /><br />
-      <button onClick={() => navigate("/")}>Back</button>
+      <button onClick={createMeeting}>Create</button>
     </div>
   );
 }
 
-// Join Meeting Page
+/* ---------------- JOIN ---------------- */
 function JoinMeeting() {
   const [username, setUsername] = useState("");
   const [meetingId, setMeetingId] = useState("");
   const navigate = useNavigate();
 
   const joinMeeting = async () => {
-    if (!username.trim() || !meetingId.trim()) {
-      alert("Please enter your name and meeting ID");
-      return;
-    }
-
-    const res = await fetch(`${BACKEND_URL}/api/meetings/join`, {
+    await fetch(`${BACKEND_URL}/api/meetings/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ meetingId, username })
+      body: JSON.stringify({ meetingId, username }),
     });
-    const data = await res.json();
 
-    if (!res.ok) {
-      alert(data.message || "Failed to join meeting");
-      return;
-    }
-
-    // Save username and meetingId in localStorage
     localStorage.setItem("username", username);
     localStorage.setItem("meetingId", meetingId);
-
     navigate(`/meeting/${meetingId}`);
   };
 
   return (
-    <div>
-      <h3>Join a Meeting</h3>
+    <div style={{ padding: 40 }}>
+      <h3>Join Meeting</h3>
       <input
         placeholder="Your name"
         value={username}
@@ -104,27 +89,25 @@ function JoinMeeting() {
         onChange={(e) => setMeetingId(e.target.value)}
       />
       <br /><br />
-      <button onClick={joinMeeting}>Join Meeting</button>
-      <br /><br />
-      <button onClick={() => navigate("/")}>Back</button>
+      <button onClick={joinMeeting}>Join</button>
     </div>
   );
 }
 
-// Meeting Room Page with Socket.IO + Chat
+
 function MeetingRoom() {
   const { meetingId } = useParams();
-  const [meeting, setMeeting] = useState(null);
-  const [participants, setParticipants] = useState([]);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
   const navigate = useNavigate();
-
   const username = localStorage.getItem("username");
   const storedMeetingId = localStorage.getItem("meetingId");
 
-  // Initialize Socket.IO
-  const [socket, setSocket] = useState(null);
+  const [showChat, setShowChat] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const [participants, setParticipants] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState("");
+
+  const socketRef = useRef(null);
 
   useEffect(() => {
     if (!username || !storedMeetingId) {
@@ -136,47 +119,52 @@ function MeetingRoom() {
       const res = await fetch(`${BACKEND_URL}/api/meetings/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId: storedMeetingId, username })
+        body: JSON.stringify({ meetingId: storedMeetingId, username }),
       });
       const data = await res.json();
-      setMeeting(data);
       setParticipants(data.participants || []);
     };
 
     joinExistingMeeting();
 
-    // Setup Socket.IO
-    const s = io(BACKEND_URL);
-    setSocket(s);
+    const socket = io(BACKEND_URL);
+    socketRef.current = socket;
 
-    s.emit("join", { meetingId: storedMeetingId, username });
+    socket.emit("join", { meetingId: storedMeetingId, username });
 
-    s.on("user-joined", (user) => {
-      setParticipants(prev => [...prev, user]);
-      setMessages(prev => [...prev, { system: true, text: `${user} joined the meeting` }]);
+    socket.on("user-joined", (user) => {
+      setParticipants((prev) => [...new Set([...prev, user])]);
+      setMessages((prev) => [
+        ...prev,
+        { system: true, text: `${user} joined the meeting` },
+      ]);
     });
 
-    s.on("user-left", (user) => {
-      setParticipants(prev => prev.filter(u => u !== user));
-      setMessages(prev => [...prev, { system: true, text: `${user} left the meeting` }]);
+    socket.on("user-left", (user) => {
+      setParticipants((prev) => prev.filter((u) => u !== user));
+      setMessages((prev) => [
+        ...prev,
+        { system: true, text: `${user} left the meeting` },
+      ]);
     });
 
-    s.on("message", (msg) => {
-      // if (msg.senderSocketId === socket.id) return;
-      setMessages(prev => [...prev, msg]);
+    socket.on("message", (msg) => {
+      setMessages((prev) => [...prev, msg]);
     });
 
     return () => {
-      s.emit("leave", { meetingId: storedMeetingId, username });
-      s.disconnect();
+      socket.emit("leave", { meetingId: storedMeetingId, username });
+      socket.disconnect();
     };
   }, [navigate]);
 
   const sendMessage = () => {
     if (!newMessage.trim()) return;
-    const msg = { username, text: newMessage };
-    socket.emit("message", { meetingId: storedMeetingId, username, text: newMessage });
-    // setMessages(prev => [...prev, msg]);
+    socketRef.current.emit("message", {
+      meetingId: storedMeetingId,
+      username,
+      text: newMessage,
+    });
     setNewMessage("");
   };
 
@@ -184,66 +172,184 @@ function MeetingRoom() {
     await fetch(`${BACKEND_URL}/api/meetings/leave`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ meetingId: storedMeetingId, username })
+      body: JSON.stringify({ meetingId: storedMeetingId, username }),
     });
-    localStorage.removeItem("username");
-    localStorage.removeItem("meetingId");
+    localStorage.clear();
     navigate("/");
   };
 
-  if (!meeting) return <p>Loading meeting...</p>;
-
   return (
-    <div style={{ display: "flex", gap: "20px" }}>
-      {/* Participants List */}
-      <div style={{ flex: 1 }}>
-        <h3>Meeting ID: {meeting.meetingId}</h3>
-        <h4>Participants</h4>
-        <ul>
-          {participants.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
-        </ul>
-        <button onClick={leaveMeeting}>Leave Meeting</button>
+    <div
+      style={{
+        width: "100vw",
+        height: "100vh",
+        overflow: "hidden", // 🔥 FIX: lock page scroll
+        display: "flex",
+        flexDirection: "column",
+        background: "#202124",
+        color: "#fff",
+      }}
+    >
+      {/* HEADER */}
+      <div
+        style={{
+          height: 56,
+          padding: "0 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: "#2b2c2f",
+        }}
+      >
+        <strong>{username}</strong>
+        <strong>Meeting ID: {meetingId}</strong>
       </div>
 
-      {/* Chat Box */}
-      <div style={{ flex: 1 }}>
-        <h4>Chat</h4>
-        <div style={{ height: "300px", overflowY: "scroll", border: "1px solid #ccc", padding: "5px" }}>
-          {messages.map((m, i) => (
-            <p key={i} style={{ color: m.system ? "gray" : "black" }}>
-              {m.system ? m.text : <><b>{m.username}:</b> {m.text}</>}
-            </p>
-          ))}
-        </div>
-        <input
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type a message"
-          style={{ width: "80%", padding: "5px", marginTop: "5px" }}
+      {/* MAIN */}
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          padding: 12,
+          gap: 12,
+          overflow: "hidden", // 🔥 FIX: prevent main expansion
+        }}
+      >
+        {/* VIDEO */}
+        <div
+          style={{
+            flex: showChat || showMembers ? "0 0 60%" : 1,
+            background: "#000",
+            borderRadius: 12,
+          }}
         />
-        <button onClick={sendMessage} style={{ padding: "5px 10px", marginLeft: "5px" }}>Send</button>
+
+        {(showChat || showMembers) && (
+          <div
+            style={{
+              flex: "0 0 40%",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              overflow: "hidden", // 🔥 FIX: lock right side
+            }}
+          >
+            {/* MEMBERS */}
+            {showMembers && (
+              <div
+                style={{
+                  background: "#303134",
+                  borderRadius: 12,
+                  padding: 16,
+                  flex: showChat && showMembers ? "1 1 50%" : 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <h4>Members</h4>
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                  <ul>
+                    {participants.map((p) => (
+                      <li key={p}>
+                        {p} {p === username && "(You)"}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* CHAT */}
+            {showChat && (
+              <div
+                style={{
+                  background: "#303134",
+                  borderRadius: 12,
+                  padding: 16,
+                  flex: showChat && showMembers ? "1 1 50%" : 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <h4>Chat</h4>
+
+                {/* ONLY SCROLLABLE AREA */}
+                <div
+                  style={{
+                    flex: 1,
+                    overflowY: "auto", // ✅ correct scrolling
+                    paddingRight: 8,
+                  }}
+                >
+                  {messages.map((m, i) => (
+                    <p key={i} style={{ color: m.system ? "gray" : "#fff" }}>
+                      {m.system ? (
+                        m.text
+                      ) : (
+                        <>
+                          <b>{m.username}:</b> {m.text}
+                        </>
+                      )}
+                    </p>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    placeholder="Type a message"
+                    style={{ flex: 1, padding: 8 }}
+                  />
+                  <button onClick={sendMessage}>Send</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* FOOTER */}
+      <div
+        style={{
+          height: 72,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 16,
+          background: "#2b2c2f",
+        }}
+      >
+        <button onClick={() => setShowMembers((p) => !p)}>Members</button>
+        <button onClick={() => setShowChat((p) => !p)}>Chat</button>
+        <button
+          style={{ background: "red", color: "#fff", padding: "6px 16px" }}
+          onClick={leaveMeeting}
+        >
+          Leave
+        </button>
       </div>
     </div>
   );
 }
 
-// Main App
-function App() {
+
+
+
+
+
+/* ---------------- APP ---------------- */
+export default function App() {
   return (
     <Router>
-      <div style={{ padding: 20 }}>
-        <h2>Mini Google Meet (Step 2 - Real-time Chat)</h2>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/create" element={<CreateMeeting />} />
-          <Route path="/join" element={<JoinMeeting />} />
-          <Route path="/meeting/:meetingId" element={<MeetingRoom />} />
-        </Routes>
-      </div>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/create" element={<CreateMeeting />} />
+        <Route path="/join" element={<JoinMeeting />} />
+        <Route path="/meeting/:meetingId" element={<MeetingRoom />} />
+      </Routes>
     </Router>
   );
 }
-
-export default App;
