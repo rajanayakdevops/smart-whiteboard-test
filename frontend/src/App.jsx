@@ -106,14 +106,11 @@ function MeetingRoom() {
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  const [isMuted, setIsMuted] = useState(false);
-  const [videoOff, setVideoOff] = useState(false);
 
   const socketRef = useRef(null);
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
-  const peersRef = useRef({}); // for multiple peers
-  const remoteVideosRef = useRef({}); // track remote video elements
+  const peersRef = useRef({}); // Store multiple peers
 
   useEffect(() => {
     if (!username || !storedMeetingId) {
@@ -126,57 +123,58 @@ function MeetingRoom() {
 
     socket.emit("join", { meetingId: storedMeetingId, username });
 
-    // Receive participant list
-    socket.on("participants", (list) => {
-      setParticipants(list);
+    // Get camera & mic
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+      });
+
+    // Handle new user
+    socket.on("all-users", (users) => {
+      users.forEach((user) => {
+        if (user === username) return;
+        const peer = createPeer(user, socket, localStreamRef.current);
+        peersRef.current[user] = peer;
+      });
+      setParticipants(users);
     });
 
-    // Camera + Mic
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      localStreamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+    socket.on("user-joined", (user) => {
+      setParticipants((prev) => [...prev, user]);
+      setMessages((prev) => [...prev, { system: true, text: `${user} joined the meeting` }]);
     });
 
-    // WebRTC signaling
     socket.on("offer", async ({ from, offer }) => {
-      const peer = createPeer();
+      const peer = createAnswerPeer(from, offer, socket, localStreamRef.current);
       peersRef.current[from] = peer;
-      await peer.setRemoteDescription(offer);
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      socket.emit("answer", { to: from, answer });
     });
 
     socket.on("answer", async ({ from, answer }) => {
       const peer = peersRef.current[from];
-      if (peer) await peer.setRemoteDescription(answer);
+      await peer.setRemoteDescription(answer);
     });
 
-    socket.on("ice-candidate", ({ from, candidate }) => {
+    socket.on("ice-candidate", async ({ from, candidate }) => {
       const peer = peersRef.current[from];
-      if (peer) peer.addIceCandidate(candidate);
+      if (peer) await peer.addIceCandidate(candidate);
     });
 
-    // New user joined
-    socket.on("user-joined", (newUser) => {
-      setParticipants((p) => [...new Set([...p, newUser])]);
-      const peer = createPeer(newUser, true); // initiator
-      peersRef.current[newUser] = peer;
-    });
-
-    // User left
     socket.on("user-left", (user) => {
-      setParticipants((p) => p.filter((u) => u !== user));
-      setMessages((p) => [...p, { system: true, text: `${user} left the meeting` }]);
-      if (remoteVideosRef.current[user]) {
-        remoteVideosRef.current[user].remove();
-        delete remoteVideosRef.current[user];
-      }
-      if (peersRef.current[user]) delete peersRef.current[user];
+      setParticipants((prev) => prev.filter((p) => p !== user));
+      setMessages((prev) => [...prev, { system: true, text: `${user} left the meeting` }]);
+      // Remove remote video
+      const video = document.getElementById(`video-${user}`);
+      if (video) video.remove();
+      delete peersRef.current[user];
     });
 
-    // Chat
-    socket.on("message", (msg) => setMessages((p) => [...p, msg]));
+    socket.on("message", (msg) => {
+      setMessages((prev) => [...prev, msg]);
+    });
 
     return () => {
       socket.emit("leave", { meetingId: storedMeetingId, username });
@@ -184,43 +182,60 @@ function MeetingRoom() {
     };
   }, [navigate]);
 
-  const createPeer = (user = null, initiator = false) => {
+  const createPeer = (userToSignal, socket, stream) => {
     const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
 
     // Add local tracks
-    localStreamRef.current?.getTracks().forEach((track) => peer.addTrack(track, localStreamRef.current));
+    stream?.getTracks().forEach((track) => peer.addTrack(track, stream));
 
-    // Handle remote track
-    peer.ontrack = (event) => {
-      if (!user) user = "remote-" + Math.random();
-      let videoEl = remoteVideosRef.current[user];
-      if (!videoEl) {
-        videoEl = document.createElement("video");
-        videoEl.autoplay = true;
-        videoEl.style.width = "100%";
-        videoEl.style.height = "100%";
-        videoEl.style.borderRadius = "12px";
-        document.getElementById("videoContainer").appendChild(videoEl);
-        remoteVideosRef.current[user] = videoEl;
-      }
-      videoEl.srcObject = event.streams[0];
-    };
+    // Handle remote stream
+    peer.ontrack = (event) => addRemoteStream(userToSignal, event.streams[0]);
 
-    // ICE candidates
     peer.onicecandidate = (e) => {
       if (e.candidate) {
-        socketRef.current.emit("ice-candidate", { meetingId: storedMeetingId, candidate: e.candidate, to: user });
+        socket.emit("ice-candidate", { meetingId: storedMeetingId, to: userToSignal, candidate: e.candidate });
       }
     };
 
-    // If initiator, create offer
-    if (initiator) {
-      peer.createOffer().then((offer) => peer.setLocalDescription(offer)).then(() => {
-        socketRef.current.emit("offer", { meetingId: storedMeetingId, offer: peer.localDescription, to: user });
-      });
-    }
+    peer.createOffer().then((offer) => peer.setLocalDescription(offer)).then(() => {
+      socket.emit("offer", { meetingId: storedMeetingId, to: userToSignal, offer: peer.localDescription });
+    });
 
     return peer;
+  };
+
+  const createAnswerPeer = (from, offer, socket, stream) => {
+    const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+    stream?.getTracks().forEach((track) => peer.addTrack(track, stream));
+
+    peer.ontrack = (event) => addRemoteStream(from, event.streams[0]);
+
+    peer.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit("ice-candidate", { meetingId: storedMeetingId, to: from, candidate: e.candidate });
+      }
+    };
+
+    peer.setRemoteDescription(offer).then(() => peer.createAnswer()).then((answer) => peer.setLocalDescription(answer)).then(() => {
+      socket.emit("answer", { meetingId: storedMeetingId, to: from, answer: peer.localDescription });
+    });
+
+    return peer;
+  };
+
+  const addRemoteStream = (user, stream) => {
+    let video = document.getElementById(`video-${user}`);
+    if (!video) {
+      video = document.createElement("video");
+      video.id = `video-${user}`;
+      video.autoplay = true;
+      video.style.width = "100%";
+      video.style.height = "100%";
+      video.style.borderRadius = "12px";
+      document.getElementById("videoContainer").appendChild(video);
+    }
+    video.srcObject = stream;
   };
 
   const sendMessage = () => {
@@ -239,37 +254,21 @@ function MeetingRoom() {
     navigate("/");
   };
 
-  const toggleMute = () => {
-    const enabled = !isMuted;
-    localStreamRef.current.getAudioTracks()[0].enabled = enabled;
-    setIsMuted(enabled);
-  };
-
-  const toggleVideo = () => {
-    const enabled = !videoOff;
-    localStreamRef.current.getVideoTracks()[0].enabled = enabled;
-    setVideoOff(enabled);
-  };
-
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column", background: "#202124", color: "#fff", overflow: "hidden" }}>
-      {/* HEADER */}
       <div style={{ height: 56, padding: "0 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#2b2c2f" }}>
         <strong>{username}</strong>
         <strong>Meeting ID: {meetingId}</strong>
       </div>
 
-      {/* MAIN BODY */}
       <div style={{ flex: 1, display: "flex", padding: 12, gap: 12, overflow: "hidden" }}>
-        {/* VIDEO */}
         <div
           id="videoContainer"
-          style={{ flex: showChat || showMembers ? "0 0 60%" : 1, background: "#000", borderRadius: 12, display: "flex", justifyContent: "center", alignItems: "center", overflow: "hidden", position: "relative" }}
+          style={{ flex: showChat || showMembers ? "0 0 60%" : 1, background: "#000", borderRadius: 12, display: "flex", justifyContent: "center", alignItems: "center", overflow: "hidden", flexWrap: "wrap", gap: 8 }}
         >
-          <video ref={localVideoRef} autoPlay muted style={{ width: "100%", height: "100%", borderRadius: 12 }} />
+          <video ref={localVideoRef} autoPlay muted style={{ width: "48%", height: "48%", borderRadius: 12 }} />
         </div>
 
-        {/* RIGHT PANEL */}
         {(showChat || showMembers) && (
           <div style={{ flex: "0 0 40%", display: "flex", flexDirection: "column", gap: 12, overflow: "hidden" }}>
             {showMembers && (
@@ -278,7 +277,9 @@ function MeetingRoom() {
                 <div style={{ flex: 1, overflowY: "auto" }}>
                   <ul>
                     {participants.map((p) => (
-                      <li key={p}>{p} {p === username && "(You)"}</li>
+                      <li key={p}>
+                        {p} {p === username && "(You)"}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -304,19 +305,14 @@ function MeetingRoom() {
         )}
       </div>
 
-      {/* FOOTER */}
       <div style={{ height: 72, display: "flex", justifyContent: "center", alignItems: "center", gap: 16, background: "#2b2c2f" }}>
         <button onClick={() => setShowMembers((p) => !p)}>Members</button>
         <button onClick={() => setShowChat((p) => !p)}>Chat</button>
-        <button onClick={toggleMute}>{isMuted ? "Unmute" : "Mute"}</button>
-        <button onClick={toggleVideo}>{videoOff ? "Video On" : "Video Off"}</button>
         <button style={{ background: "red", color: "#fff", padding: "6px 16px" }} onClick={leaveMeeting}>Leave</button>
       </div>
     </div>
   );
 }
-
-
 
 /* ---------------- APP ---------------- */
 export default function App() {

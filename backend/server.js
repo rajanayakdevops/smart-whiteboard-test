@@ -9,70 +9,53 @@ const meetingRoutes = require("./routes/meetings");
 
 const app = express();
 
-// ------------------ MIDDLEWARE ------------------
 app.use(cors());
 app.use(express.json());
 
-// ------------------ API ROUTES ------------------
+// API routes (keep all your existing routes intact)
 app.use("/api/meetings", meetingRoutes);
 
-// ------------------ DB CONNECTION ------------------
+// DB connection
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error(err));
 
-// ------------------ SERVER + SOCKET.IO ------------------
+// ------------------ SOCKET.IO SETUP ------------------
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" },
 });
 
-// In-memory participants tracking
-// meetingId -> [username1, username2]
+// Keep track of participants in memory (meetingId -> participants array)
 const meetingsParticipants = {};
 
 io.on("connection", (socket) => {
-  console.log("Socket connected:", socket.id);
+  console.log("New socket connected:", socket.id);
 
-  // -------- JOIN MEETING --------
+  // When a user joins a meeting
   socket.on("join", ({ meetingId, username }) => {
     socket.join(meetingId);
 
-    if (!meetingsParticipants[meetingId]) {
-      meetingsParticipants[meetingId] = [];
-    }
-
+    // Add user to participants list
+    if (!meetingsParticipants[meetingId]) meetingsParticipants[meetingId] = [];
     if (!meetingsParticipants[meetingId].includes(username)) {
       meetingsParticipants[meetingId].push(username);
     }
 
-    // Notify others
+    // Notify other participants
     socket.to(meetingId).emit("user-joined", username);
 
-    // Send participant list to joined user
-    socket.emit("participants", meetingsParticipants[meetingId]);
+    // Optionally send current participants to new user
+    io.to(socket.id).emit("participants", meetingsParticipants[meetingId]);
   });
 
-  // -------- CHAT MESSAGE --------
+  // Chat messages
   socket.on("message", ({ meetingId, username, text }) => {
     io.to(meetingId).emit("message", { username, text });
   });
 
-  // -------- WEBRTC SIGNALING --------
-  socket.on("offer", ({ meetingId, offer }) => {
-    socket.to(meetingId).emit("offer", offer);
-  });
-
-  socket.on("answer", ({ meetingId, answer }) => {
-    socket.to(meetingId).emit("answer", answer);
-  });
-
-  socket.on("ice-candidate", ({ meetingId, candidate }) => {
-    socket.to(meetingId).emit("ice-candidate", candidate);
-  });
-
-  // -------- LEAVE MEETING --------
+  // When a user leaves
   socket.on("leave", ({ meetingId, username }) => {
     socket.leave(meetingId);
 
@@ -85,14 +68,18 @@ io.on("connection", (socket) => {
     socket.to(meetingId).emit("user-left", username);
   });
 
-  // -------- DISCONNECT --------
-  socket.on("disconnect", () => {
-    console.log("Socket disconnected:", socket.id);
+  socket.on("disconnecting", () => {
+    // Handle user disconnecting from all rooms
+    const rooms = [...socket.rooms];
+    rooms.forEach((meetingId) => {
+      if (meetingsParticipants[meetingId]) {
+        // We can't get username from socket directly here, so optional: skip
+        // In frontend, we handle leave manually before disconnect
+      }
+    });
   });
 });
 
-// ------------------ START SERVER ------------------
+// ------------------ SERVER ------------------
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () =>
-  console.log(`Server running on http://localhost:${PORT}`)
-);
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
