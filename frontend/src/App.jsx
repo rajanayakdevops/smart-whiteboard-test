@@ -49,7 +49,7 @@ function CreateMeeting() {
 
   return (
     <div style={{ padding: 40 }}>
-      <h3>Create Meeting</h3>
+      <h3>Create a new meeting</h3>
       <input
         placeholder="Your name"
         value={username}
